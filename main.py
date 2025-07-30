@@ -252,30 +252,64 @@ class IBANScraper:
         try:
             chrome_options = setup_chrome_options()
             
-            # Get ChromeDriver with timeout handling
-            chrome_driver_path = ChromeDriverManager().install()
-            logger.info(f"ChromeDriver path: {chrome_driver_path}")
-            
-            # Fix permissions for both macOS and Linux
-            try:
+            # For Linux containers, use system Chrome with manual driver setup
+            if platform.system() == "Linux":
+                try:
+                    # Try to use system chromedriver first
+                    chrome_driver_path = "/usr/bin/chromedriver"
+                    if not os.path.exists(chrome_driver_path):
+                        # Fallback to webdriver-manager with specific architecture
+                        from webdriver_manager.chrome import ChromeDriverManager
+                        from webdriver_manager.core.utils import ChromeType
+                        
+                        chrome_driver_path = ChromeDriverManager(
+                            chrome_type=ChromeType.CHROMIUM
+                        ).install()
+                        
+                        # Ensure we have the right executable
+                        if os.path.isdir(chrome_driver_path):
+                            # Find the actual chromedriver executable
+                            for root, dirs, files in os.walk(chrome_driver_path):
+                                for file in files:
+                                    if file == "chromedriver" and os.access(os.path.join(root, file), os.X_OK):
+                                        chrome_driver_path = os.path.join(root, file)
+                                        break
+                        
+                        logger.info(f"Using ChromeDriver: {chrome_driver_path}")
+                        
+                        # Fix permissions
+                        subprocess.run(['chmod', '+x', chrome_driver_path], 
+                                     check=False, capture_output=True)
+                
+                except Exception as e:
+                    logger.warning(f"ChromeDriver setup failed: {e}")
+                    # Last resort: try to find system chromedriver
+                    result = subprocess.run(['which', 'chromedriver'], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        chrome_driver_path = result.stdout.strip()
+                        logger.info(f"Found system chromedriver: {chrome_driver_path}")
+                    else:
+                        raise Exception("No ChromeDriver found")
+            else:
+                # macOS development setup
+                chrome_driver_path = ChromeDriverManager().install()
                 if platform.system() == "Darwin":
                     subprocess.run(['xattr', '-d', 'com.apple.quarantine', chrome_driver_path], 
                                  check=False, capture_output=True)
                 subprocess.run(['chmod', '+x', chrome_driver_path], 
                              check=False, capture_output=True)
-                logger.info("Fixed ChromeDriver permissions")
-            except Exception as e:
-                logger.warning(f"Could not fix permissions: {e}")
+            
+            logger.info(f"ChromeDriver path: {chrome_driver_path}")
             
             # Create service with optimized settings
             service = Service(
                 chrome_driver_path,
-                log_level='ERROR',  # Reduce Chrome logs
-                service_args=['--verbose']
+                log_level='ERROR'
             )
             
             # Initialize driver with retry logic
-            max_retries = 3
+            max_retries = 2
             for attempt in range(max_retries):
                 try:
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -284,13 +318,13 @@ class IBANScraper:
                     logger.warning(f"Driver initialization attempt {attempt + 1} failed: {e}")
                     if attempt == max_retries - 1:
                         raise
-                    time.sleep(2)
+                    time.sleep(1)
             
             # Set optimized timeouts for Digital Ocean
             selenium_timeout = int(os.getenv("SELENIUM_TIMEOUT", "30"))
-            self.driver.implicitly_wait(10)
+            self.driver.implicitly_wait(5)
             self.driver.set_page_load_timeout(selenium_timeout)
-            self.driver.set_script_timeout(15)
+            self.driver.set_script_timeout(10)
             
             logger.info("Chrome driver initialized successfully")
             
@@ -409,22 +443,29 @@ class IBANScraper:
     def calculate_iban(self, country_code: str, bank_code: str, account_number: str) -> dict:
         """Calculate IBAN with fallback methods"""
         
-        # Method 1: Try requests-only first (more reliable on macOS)
+        # Method 1: Try requests-only first (primary method for production)
         try:
-            logger.info("Trying requests-only method first")
+            logger.info("Trying optimized requests-only method")
             return calculate_iban_requests_only(country_code, bank_code, account_number)
         except Exception as e:
-            logger.warning(f"Requests-only method failed: {e}")
+            logger.warning(f"Requests method failed: {e}")
         
-        # Method 2: Try Selenium as fallback
-        try:
-            logger.info("Trying Selenium method as fallback")
-            return self.calculate_iban_selenium(country_code, bank_code, account_number)
-        except Exception as e:
-            logger.error(f"Selenium method also failed: {e}")
+        # Method 2: Try Selenium as fallback (only if Chrome is available)
+        if os.getenv("DISABLE_SELENIUM", "false").lower() != "true":
+            try:
+                logger.info("Trying Selenium method as fallback")
+                return self.calculate_iban_selenium(country_code, bank_code, account_number)
+            except Exception as e:
+                logger.error(f"Selenium method also failed: {e}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Both calculation methods failed. Requests method failed, Selenium: {str(e)}"
+                )
+        else:
+            logger.info("Selenium disabled, only using requests method")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Both calculation methods failed. Requests: Failed, Selenium: {str(e)}"
+                detail="IBAN calculation failed. Requests method failed and Selenium is disabled."
             )
 
 # Global scraper instance

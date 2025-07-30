@@ -1,0 +1,65 @@
+name: ibanscraper2
+region: nyc1
+services:
+- name: api
+  source_dir: /
+  github:
+    repo: dammyaro/iban-scraper
+    branch: main
+    deploy_on_push: true
+  dockerfile_path: Dockerfile
+  build_command: |
+    echo "Building optimized IBAN scraper for Digital Ocean..."
+    echo "Using Python 3.11 for better compatibility..."
+  run_command: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
+  environment_slug: docker
+  instance_count: 1
+  instance_size_slug: basic-xxs  # 0.5 vCPU, 512MB RAM - cost optimized
+  http_port: 8000
+  
+  health_check:
+    http_path: /health
+    initial_delay_seconds: 60  # Increased for Chrome initialization
+    period_seconds: 30
+    timeout_seconds: 10
+    failure_threshold: 3
+    success_threshold: 1
+  
+  envs:
+  - key: PYTHONPATH
+    value: /home/app
+  - key: CHROME_HEADLESS
+    value: "true"
+  - key: WDM_LOG_LEVEL
+    value: "0"
+  - key: PYTHONUNBUFFERED
+    value: "1"
+  - key: DISPLAY
+    value: ":99"
+  - key: CHROME_NO_SANDBOX
+    value: "true"
+  - key: SELENIUM_TIMEOUT
+    value: "30"
+  - key: REQUEST_TIMEOUT
+    value: "20"
+  - key: PORT
+    value: "8000"
+  
+  # Optimized auto-scaling for cost efficiency
+  autoscaling:
+    min_instance_count: 1
+    max_instance_count: 2
+    metrics:
+    - type: cpu
+      target:
+        average_utilization: 80
+    - type: memory
+      target:
+        average_utilization: 85
+
+# Optional: Redis for caching IBAN results (commented out for cost optimization)
+# databases:
+# - name: redis-cache
+#   engine: REDIS
+#   version: "7"
+#   size: db-s-1vcpu-1gb

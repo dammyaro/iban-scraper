@@ -5,6 +5,8 @@ FROM python:3.11-slim as builder
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    libxml2-dev \
+    libxslt-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -13,7 +15,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Production stage

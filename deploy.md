@@ -1,5 +1,12 @@
 # Digital Ocean App Platform Deployment Guide
 
+## 🚨 Build Issue Fixed
+The deployment was failing due to Python 3.13 compatibility issues with `lxml` and `pydantic-core`. Fixed by:
+- Downgraded Pydantic to v2.4.2 (compatible with Python 3.11)
+- Removed lxml dependency (not needed, BeautifulSoup uses html.parser)
+- Added build dependencies for compilation
+- Specified Python 3.11 runtime
+
 ## Optimizations Made
 
 ### 1. **Docker-based Deployment**

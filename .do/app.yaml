@@ -10,6 +10,7 @@ services:
   dockerfile_path: Dockerfile
   build_command: |
     echo "Building optimized IBAN scraper for Digital Ocean..."
+    echo "Using Python 3.11 for better compatibility..."
   run_command: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
   environment_slug: docker
   instance_count: 1

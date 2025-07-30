@@ -77,7 +77,6 @@ def setup_chrome_options():
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-plugins")
     chrome_options.add_argument("--disable-images")
-    chrome_options.add_argument("--disable-javascript")
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--disable-features=VizDisplayCompositor")
     chrome_options.add_argument("--disable-background-networking")

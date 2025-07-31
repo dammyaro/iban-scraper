@@ -11,7 +11,7 @@ services:
   build_command: |
     echo "Building IBAN Calculator with Wise integration..."
     echo "Version 3.1.0 - Playwright + Bank Name Extraction"
-  run_command: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
+  run_command: uvicorn main_fixed:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
   environment_slug: docker
   instance_count: 1
   instance_size_slug: basic-s  # 1 vCPU, 512MB RAM - sufficient for Playwright

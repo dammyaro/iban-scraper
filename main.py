@@ -38,6 +38,7 @@ class IBANResponse(BaseModel):
     account_number: str
     check_digits: str
     is_valid: bool
+    bank_name: Optional[str] = None
     message: Optional[str] = None
     method_used: Optional[str] = None
 
@@ -98,8 +99,9 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                 content = await page.content()
                 logger.info(f"Content length: {len(content)}")
                 
-                # Look for IBAN
+                # Look for IBAN and bank name
                 iban = None
+                bank_name = None
                 
                 # Method 1: Country-specific patterns
                 if country_code.upper() == 'GB':
@@ -112,6 +114,33 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                 if iban_match:
                     iban = iban_match.group(1)
                     logger.info(f"Found IBAN: {iban}")
+                
+                # Method 2: Extract bank name from JavaScript dataLayer
+                bank_name_js = re.search(r"'ibanBankName':\s*[\"']([^\"']+)[\"']", content)
+                if bank_name_js:
+                    bank_name = bank_name_js.group(1)
+                    logger.info(f"Found bank name from JS: {bank_name}")
+                
+                # Method 3: Extract bank name from image alt text (fallback)
+                if not bank_name:
+                    soup = BeautifulSoup(content, 'html.parser')
+                    bank_img = soup.find('img', {'class': 'bank-logo'})
+                    if bank_img and bank_img.get('alt'):
+                        bank_name = bank_img.get('alt')
+                        logger.info(f"Found bank name from image alt: {bank_name}")
+                
+                # Method 4: Look for bank name patterns in text (fallback)
+                if not bank_name:
+                    uk_banks = [
+                        'BANK OF SCOTLAND PLC', 'HALIFAX PLC', 'BARCLAYS BANK PLC',
+                        'HSBC UK BANK PLC', 'LLOYDS BANK PLC', 'NATWEST BANK PLC',
+                        'SANTANDER UK PLC', 'TSB BANK PLC', 'NATIONWIDE BUILDING SOCIETY'
+                    ]
+                    for bank in uk_banks:
+                        if bank in content:
+                            bank_name = bank
+                            logger.info(f"Found bank name by pattern: {bank_name}")
+                            break
                 
                 await browser.close()
                 
@@ -128,6 +157,7 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                     "account_number": account_number,
                     "check_digits": check_digits,
                     "is_valid": is_valid,
+                    "bank_name": bank_name,
                     "message": "IBAN calculated successfully",
                     "method_used": "wise"
                 }

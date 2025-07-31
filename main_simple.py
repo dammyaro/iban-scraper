@@ -59,12 +59,12 @@ def calculate_iban_simple(country_code: str, bank_code: str, account_number: str
             'Upgrade-Insecure-Requests': '1',
         }
         
-        # Try multiple IBAN calculator services
+        # Try multiple IBAN calculator services with better session handling
         services = [
             {
                 "name": "iban.com",
                 "url": "https://www.iban.com/calculate-iban",
-                "method": "post",
+                "method": "get_then_post",
                 "data": {
                     'country': country_code.upper(),
                     'bank': bank_code,
@@ -74,7 +74,7 @@ def calculate_iban_simple(country_code: str, bank_code: str, account_number: str
             {
                 "name": "ibancalculator.com", 
                 "url": "https://www.ibancalculator.com/",
-                "method": "post",
+                "method": "get_then_post",
                 "data": {
                     'country': country_code.upper(),
                     'bankcode': bank_code,
@@ -87,17 +87,34 @@ def calculate_iban_simple(country_code: str, bank_code: str, account_number: str
             try:
                 logger.info(f"Trying {service['name']}...")
                 
-                if service['method'] == 'post':
-                    response = session.post(
-                        service['url'], 
-                        data=service['data'], 
-                        headers=headers, 
-                        timeout=15
-                    )
-                else:
-                    response = session.get(service['url'], headers=headers, timeout=15)
+                # First get the page to establish session
+                get_response = session.get(service['url'], headers=headers, timeout=15)
+                get_response.raise_for_status()
+                logger.info(f"Got initial page from {service['name']}")
                 
+                # Parse for any hidden fields or tokens
+                soup = BeautifulSoup(get_response.content, 'html.parser')
+                form_data = service['data'].copy()
+                
+                # Add any hidden form fields
+                for hidden_input in soup.find_all('input', type='hidden'):
+                    name = hidden_input.get('name')
+                    value = hidden_input.get('value', '')
+                    if name:
+                        form_data[name] = value
+                
+                # Add referer header
+                headers['Referer'] = service['url']
+                
+                # Now submit the form
+                response = session.post(
+                    service['url'], 
+                    data=form_data, 
+                    headers=headers, 
+                    timeout=15
+                )
                 response.raise_for_status()
+                logger.info(f"Posted form to {service['name']}")
                 
                 # Parse response
                 soup = BeautifulSoup(response.content, 'html.parser')

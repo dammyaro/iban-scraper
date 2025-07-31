@@ -1,13 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from playwright.async_api import async_playwright
+import httpx
+import aiohttp
 from bs4 import BeautifulSoup
 import time
 import logging
@@ -50,72 +45,192 @@ class IBANResponse(BaseModel):
     message: Optional[str] = None
     method_used: Optional[str] = None
 
-def setup_chrome_options():
-    """Enhanced Chrome setup optimized for Digital Ocean App Platform"""
-    chrome_options = Options()
-    
-    # Headless mode - required for server environments
-    if os.getenv("CHROME_HEADLESS", "true").lower() == "true":
-        chrome_options.add_argument("--headless=new")
-    
-    # Essential stability options for containerized environments
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-software-rasterizer")
-    chrome_options.add_argument("--disable-background-timer-throttling")
-    chrome_options.add_argument("--disable-renderer-backgrounding")
-    chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-    chrome_options.add_argument("--disable-ipc-flooding-protection")
-    
-    # Memory optimization for limited resources
-    chrome_options.add_argument("--memory-pressure-off")
-    chrome_options.add_argument("--max_old_space_size=2048")
-    chrome_options.add_argument("--aggressive-cache-discard")
-    
-    # Disable unnecessary features to save resources
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-images")
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-    chrome_options.add_argument("--disable-background-networking")
-    chrome_options.add_argument("--disable-sync")
-    chrome_options.add_argument("--disable-translate")
-    chrome_options.add_argument("--disable-default-apps")
-    
-    # Process optimization
-    chrome_options.add_argument("--single-process")
-    chrome_options.add_argument("--no-zygote")
-    chrome_options.add_argument("--disable-setuid-sandbox")
-    
-    # Window and display settings
-    chrome_options.add_argument("--window-size=1024,768")
-    chrome_options.add_argument("--virtual-time-budget=5000")
-    
-    # User agent for better compatibility
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    # Disable automation detection
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # Set Chrome binary location for Linux containers
-    if platform.system() == "Linux":
-        chrome_options.binary_location = "/usr/bin/google-chrome"
-    elif platform.system() == "Darwin":
-        # Keep macOS support for local development
-        chrome_paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium"
-        ]
-        for chrome_path in chrome_paths:
-            if os.path.exists(chrome_path):
-                chrome_options.binary_location = chrome_path
-                logger.info(f"Using Chrome binary: {chrome_path}")
-                break
-    
-    return chrome_options
+async def calculate_iban_playwright(country_code: str, bank_code: str, account_number: str) -> dict:
+    """Calculate IBAN using Playwright (more reliable than Selenium)"""
+    try:
+        logger.info("Attempting IBAN calculation using Playwright")
+        
+        async with async_playwright() as p:
+            # Launch browser with optimized settings
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-default-apps',
+                    '--single-process',
+                    '--no-zygote'
+                ]
+            )
+            
+            page = await browser.new_page()
+            
+            # Set user agent
+            await page.set_user_agent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            
+            # Navigate to IBAN calculator
+            url = "https://www.iban.com/calculate-iban"
+            await page.goto(url, timeout=30000)
+            
+            # Fill the form
+            await page.select_option('#country', country_code.upper())
+            await page.wait_for_timeout(1000)  # Wait for form update
+            
+            await page.fill('#bank', bank_code)
+            await page.fill('#account', account_number)
+            
+            # Submit form
+            await page.click('button[type="submit"]')
+            
+            # Wait for result
+            await page.wait_for_selector('#iban,div.result,.alert', timeout=15000)
+            
+            # Extract IBAN
+            page_content = await page.content()
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            iban = None
+            
+            # Method 1: Input field
+            iban_input = soup.find('input', {'id': 'iban'})
+            if iban_input and iban_input.get('value'):
+                iban = iban_input.get('value').strip()
+            
+            # Method 2: Result text
+            if not iban:
+                result_div = soup.find('div', class_='result')
+                if result_div:
+                    iban_match = re.search(r'[A-Z]{2}[0-9]{2}[A-Z0-9]+', result_div.get_text())
+                    if iban_match:
+                        iban = iban_match.group()
+            
+            await browser.close()
+            
+            if not iban or len(iban) < 15:
+                raise Exception("Could not extract valid IBAN from Playwright result")
+            
+            check_digits = iban[2:4] if len(iban) >= 4 else ""
+            is_valid = bool(iban and len(iban) >= 15 and iban[:2].isalpha() and iban[2:4].isdigit())
+            
+            logger.info(f"Successfully calculated IBAN using Playwright: {iban}")
+            
+            return {
+                "iban": iban,
+                "country": country_code.upper(),
+                "bank_code": bank_code,
+                "account_number": account_number,
+                "check_digits": check_digits,
+                "is_valid": is_valid,
+                "message": "IBAN calculated successfully",
+                "method_used": "playwright"
+            }
+            
+    except Exception as e:
+        logger.error(f"Playwright method failed: {e}")
+        raise Exception(f"Playwright failed: {str(e)}")
+
+async def calculate_iban_httpx(country_code: str, bank_code: str, account_number: str) -> dict:
+    """Enhanced async requests method using httpx"""
+    try:
+        logger.info("Attempting IBAN calculation using async httpx")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        timeout = httpx.Timeout(20.0)
+        
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            # Get form page
+            url = "https://www.iban.com/calculate-iban"
+            response = await client.get(url)
+            response.raise_for_status()
+            
+            # Parse form
+            soup = BeautifulSoup(response.content, 'html.parser')
+            form = soup.find('form')
+            
+            # Prepare form data
+            form_data = {
+                'country': country_code.upper(),
+                'bank': bank_code,
+                'account': account_number
+            }
+            
+            # Add hidden fields
+            if form:
+                for hidden_input in form.find_all('input', type='hidden'):
+                    name = hidden_input.get('name')
+                    value = hidden_input.get('value', '')
+                    if name:
+                        form_data[name] = value
+            
+            # Submit form
+            headers['Referer'] = url
+            response = await client.post(url, data=form_data)
+            response.raise_for_status()
+            
+            # Parse result
+            soup = BeautifulSoup(response.content, 'html.parser')
+            iban = None
+            
+            # Extract IBAN using multiple methods
+            iban_input = soup.find('input', {'id': 'iban'})
+            if iban_input and iban_input.get('value'):
+                iban = iban_input.get('value').strip()
+            
+            if not iban:
+                result_elements = soup.find_all(['div', 'span', 'p'], class_=re.compile(r'result|iban|output', re.I))
+                for element in result_elements:
+                    text = element.get_text()
+                    iban_match = re.search(r'\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4,32}\b', text)
+                    if iban_match:
+                        iban = iban_match.group()
+                        break
+            
+            if not iban:
+                page_text = soup.get_text()
+                iban_pattern = re.search(r'\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4,32}\b', page_text)
+                if iban_pattern:
+                    iban = iban_pattern.group()
+            
+            if not iban or len(iban) < 15:
+                raise Exception("Could not extract valid IBAN from httpx response")
+            
+            check_digits = iban[2:4] if len(iban) >= 4 else ""
+            is_valid = bool(iban and len(iban) >= 15 and iban[:2].isalpha() and iban[2:4].isdigit())
+            
+            logger.info(f"Successfully calculated IBAN using httpx: {iban}")
+            
+            return {
+                "iban": iban,
+                "country": country_code.upper(),
+                "bank_code": bank_code,
+                "account_number": account_number,
+                "check_digits": check_digits,
+                "is_valid": is_valid,
+                "message": "IBAN calculated successfully",
+                "method_used": "httpx_async"
+            }
+            
+    except Exception as e:
+        logger.error(f"Httpx method failed: {e}")
+        raise Exception(f"Httpx method failed: {str(e)}")
 
 def calculate_iban_requests_only(country_code: str, bank_code: str, account_number: str) -> dict:
     """Optimized requests-only approach - primary method for Digital Ocean"""
@@ -245,227 +360,41 @@ def calculate_iban_requests_only(country_code: str, bank_code: str, account_numb
 
 class IBANScraper:
     def __init__(self):
-        self.driver = None
-        
-    def setup_driver(self):
-        """Setup Chrome driver optimized for Digital Ocean App Platform"""
-        try:
-            chrome_options = setup_chrome_options()
-            
-            # For Linux containers, use system Chrome with manual driver setup
-            if platform.system() == "Linux":
-                try:
-                    # Try to use system chromedriver first
-                    chrome_driver_path = "/usr/bin/chromedriver"
-                    if not os.path.exists(chrome_driver_path):
-                        # Fallback to webdriver-manager with specific architecture
-                        from webdriver_manager.chrome import ChromeDriverManager
-                        from webdriver_manager.core.utils import ChromeType
-                        
-                        chrome_driver_path = ChromeDriverManager(
-                            chrome_type=ChromeType.CHROMIUM
-                        ).install()
-                        
-                        # Ensure we have the right executable
-                        if os.path.isdir(chrome_driver_path):
-                            # Find the actual chromedriver executable
-                            for root, dirs, files in os.walk(chrome_driver_path):
-                                for file in files:
-                                    if file == "chromedriver" and os.access(os.path.join(root, file), os.X_OK):
-                                        chrome_driver_path = os.path.join(root, file)
-                                        break
-                        
-                        logger.info(f"Using ChromeDriver: {chrome_driver_path}")
-                        
-                        # Fix permissions
-                        subprocess.run(['chmod', '+x', chrome_driver_path], 
-                                     check=False, capture_output=True)
-                
-                except Exception as e:
-                    logger.warning(f"ChromeDriver setup failed: {e}")
-                    # Last resort: try to find system chromedriver
-                    result = subprocess.run(['which', 'chromedriver'], 
-                                          capture_output=True, text=True)
-                    if result.returncode == 0:
-                        chrome_driver_path = result.stdout.strip()
-                        logger.info(f"Found system chromedriver: {chrome_driver_path}")
-                    else:
-                        raise Exception("No ChromeDriver found")
-            else:
-                # macOS development setup
-                chrome_driver_path = ChromeDriverManager().install()
-                if platform.system() == "Darwin":
-                    subprocess.run(['xattr', '-d', 'com.apple.quarantine', chrome_driver_path], 
-                                 check=False, capture_output=True)
-                subprocess.run(['chmod', '+x', chrome_driver_path], 
-                             check=False, capture_output=True)
-            
-            logger.info(f"ChromeDriver path: {chrome_driver_path}")
-            
-            # Create service with optimized settings
-            service = Service(
-                chrome_driver_path,
-                log_level='ERROR'
-            )
-            
-            # Initialize driver with retry logic
-            max_retries = 2
-            for attempt in range(max_retries):
-                try:
-                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                    break
-                except Exception as e:
-                    logger.warning(f"Driver initialization attempt {attempt + 1} failed: {e}")
-                    if attempt == max_retries - 1:
-                        raise
-                    time.sleep(1)
-            
-            # Set optimized timeouts for Digital Ocean
-            selenium_timeout = int(os.getenv("SELENIUM_TIMEOUT", "30"))
-            self.driver.implicitly_wait(5)
-            self.driver.set_page_load_timeout(selenium_timeout)
-            self.driver.set_script_timeout(10)
-            
-            logger.info("Chrome driver initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to setup Chrome driver: {e}")
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except:
-                    pass
-                self.driver = None
-            raise Exception(f"Chrome setup failed: {str(e)}")
+        pass
     
-    def close_driver(self):
-        """Safely close the driver"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("Chrome driver closed")
-            except Exception as e:
-                logger.warning(f"Error closing driver: {e}")
-            finally:
-                self.driver = None
-    
-    def calculate_iban_selenium(self, country_code: str, bank_code: str, account_number: str) -> dict:
-        """Calculate IBAN using Selenium (primary method)"""
-        try:
-            self.setup_driver()
-            
-            url = "https://www.iban.com/calculate-iban"
-            logger.info(f"Navigating to {url}")
-            
-            self.driver.get(url)
-            
-            # Wait and select country
-            country_dropdown = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "country"))
-            )
-            
-            select = Select(country_dropdown)
-            select.select_by_value(country_code.upper())
-            logger.info(f"Selected country: {country_code}")
-            
-            time.sleep(1)  # Wait for form update
-            
-            # Fill bank code
-            bank_field = self.driver.find_element(By.ID, "bank")
-            bank_field.clear()
-            bank_field.send_keys(bank_code)
-            
-            # Fill account number
-            account_field = self.driver.find_element(By.ID, "account")
-            account_field.clear()
-            account_field.send_keys(account_number)
-            
-            # Submit form
-            calculate_btn = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-            calculate_btn.click()
-            
-            logger.info("Form submitted, waiting for result")
-            
-            # Wait for result
-            WebDriverWait(self.driver, 15).until(
-                EC.any_of(
-                    EC.presence_of_element_located((By.ID, "iban")),
-                    EC.presence_of_element_located((By.CLASS_NAME, "result")),
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".alert"))
-                )
-            )
-            
-            # Extract IBAN
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
-            
-            iban = None
-            
-            # Method 1: Input field
-            iban_input = soup.find('input', {'id': 'iban'})
-            if iban_input and iban_input.get('value'):
-                iban = iban_input.get('value').strip()
-            
-            # Method 2: Result text
-            if not iban:
-                result_div = soup.find('div', class_='result')
-                if result_div:
-                    iban_match = re.search(r'[A-Z]{2}[0-9]{2}[A-Z0-9]+', result_div.get_text())
-                    if iban_match:
-                        iban = iban_match.group()
-            
-            if not iban or len(iban) < 15:
-                raise Exception("Could not extract valid IBAN from Selenium result")
-            
-            check_digits = iban[2:4] if len(iban) >= 4 else ""
-            is_valid = bool(iban and len(iban) >= 15 and iban[:2].isalpha() and iban[2:4].isdigit())
-            
-            logger.info(f"Successfully calculated IBAN using Selenium: {iban}")
-            
-            return {
-                "iban": iban,
-                "country": country_code.upper(),
-                "bank_code": bank_code,
-                "account_number": account_number,
-                "check_digits": check_digits,
-                "is_valid": is_valid,
-                "message": "IBAN calculated successfully",
-                "method_used": "selenium"
-            }
-            
-        except Exception as e:
-            logger.error(f"Selenium method failed: {e}")
-            raise Exception(f"Selenium failed: {str(e)}")
+    async def calculate_iban(self, country_code: str, bank_code: str, account_number: str) -> dict:
+        """Calculate IBAN with multiple fallback methods (no ChromeDriver needed!)"""
         
-        finally:
-            self.close_driver()
-    
-    def calculate_iban(self, country_code: str, bank_code: str, account_number: str) -> dict:
-        """Calculate IBAN with fallback methods"""
-        
-        # Method 1: Try requests-only first (primary method for production)
+        # Method 1: Try sync requests first (fastest)
         try:
-            logger.info("Trying optimized requests-only method")
+            logger.info("Trying optimized requests method")
             return calculate_iban_requests_only(country_code, bank_code, account_number)
         except Exception as e:
             logger.warning(f"Requests method failed: {e}")
         
-        # Method 2: Try Selenium as fallback (only if Chrome is available)
-        if os.getenv("DISABLE_SELENIUM", "false").lower() != "true":
+        # Method 2: Try async httpx (better connection handling)
+        try:
+            logger.info("Trying async httpx method")
+            return await calculate_iban_httpx(country_code, bank_code, account_number)
+        except Exception as e:
+            logger.warning(f"Httpx method failed: {e}")
+        
+        # Method 3: Try Playwright as last resort (if enabled)
+        if os.getenv("DISABLE_PLAYWRIGHT", "false").lower() != "true":
             try:
-                logger.info("Trying Selenium method as fallback")
-                return self.calculate_iban_selenium(country_code, bank_code, account_number)
+                logger.info("Trying Playwright method as fallback")
+                return await calculate_iban_playwright(country_code, bank_code, account_number)
             except Exception as e:
-                logger.error(f"Selenium method also failed: {e}")
+                logger.error(f"Playwright method also failed: {e}")
                 raise HTTPException(
                     status_code=500, 
-                    detail=f"Both calculation methods failed. Requests method failed, Selenium: {str(e)}"
+                    detail=f"All calculation methods failed. Requests: failed, Httpx: failed, Playwright: {str(e)}"
                 )
         else:
-            logger.info("Selenium disabled, only using requests method")
+            logger.info("Playwright disabled, only using HTTP methods")
             raise HTTPException(
                 status_code=500, 
-                detail="IBAN calculation failed. Requests method failed and Selenium is disabled."
+                detail="IBAN calculation failed. All HTTP methods failed and Playwright is disabled."
             )
 
 # Global scraper instance
@@ -515,8 +444,8 @@ async def calculate_iban_endpoint(request: IBANRequest):
         
         logger.info(f"Calculating IBAN for {country_code}, {bank_code}, {account_number}")
         
-        # Calculate IBAN using fallback methods
-        result = scraper.calculate_iban(country_code, bank_code, account_number)
+        # Calculate IBAN using async fallback methods
+        result = await scraper.calculate_iban(country_code, bank_code, account_number)
         
         return IBANResponse(**result)
         

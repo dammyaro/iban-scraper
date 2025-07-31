@@ -69,35 +69,72 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                 await page.wait_for_timeout(2000)  # Simple wait instead of networkidle
                 logger.info("Page loaded")
                 
-                # Select country with cloud-optimized timeouts
-                logger.info("Clicking country dropdown...")
-                await page.click('button:has-text("Select a Country")', timeout=20000)
-                await page.wait_for_timeout(3000)
+                # Try multiple approaches for country selection
+                logger.info("Attempting country selection...")
                 
+                # Method 1: Try button click
+                try:
+                    await page.click('button:has-text("Select a Country")', timeout=30000)
+                    await page.wait_for_timeout(2000)
+                    logger.info("Country dropdown opened")
+                except Exception as e:
+                    logger.warning(f"Button click failed: {e}")
+                    # Try alternative selector
+                    await page.click('[data-testid="country-selector"]', timeout=30000)
+                    await page.wait_for_timeout(2000)
+                
+                # Method 2: Select country with multiple attempts
                 logger.info(f"Selecting country: {country_code}")
-                if country_code.upper() == 'GB':
-                    await page.click('text=United Kingdom', timeout=20000)
-                elif country_code.upper() == 'DE':
-                    await page.click('text=Germany', timeout=20000)
-                elif country_code.upper() == 'FR':
-                    await page.click('text=France', timeout=20000)
-                else:
-                    await page.click(f'text={country_code.upper()}', timeout=20000)
+                country_selected = False
+                
+                for attempt in range(3):
+                    try:
+                        if country_code.upper() == 'GB':
+                            await page.click('text=United Kingdom', timeout=30000)
+                        elif country_code.upper() == 'DE':
+                            await page.click('text=Germany', timeout=30000)
+                        elif country_code.upper() == 'FR':
+                            await page.click('text=France', timeout=30000)
+                        else:
+                            await page.click(f'text={country_code.upper()}', timeout=30000)
+                        
+                        country_selected = True
+                        break
+                    except Exception as e:
+                        logger.warning(f"Country selection attempt {attempt + 1} failed: {e}")
+                        await page.wait_for_timeout(2000)
+                
+                if not country_selected:
+                    raise Exception("Failed to select country after 3 attempts")
                 
                 await page.wait_for_timeout(5000)
                 logger.info(f"Selected country: {country_code}")
                 
-                # Fill form with extended timeouts
+                # Fill form with retry logic
                 logger.info("Filling form fields...")
-                await page.fill('input[name="branch_code"]', bank_code, timeout=15000)
-                await page.fill('input[name="account_number"]', account_number, timeout=15000)
-                logger.info("Form filled")
+                for attempt in range(3):
+                    try:
+                        await page.fill('input[name="branch_code"]', bank_code, timeout=20000)
+                        await page.fill('input[name="account_number"]', account_number, timeout=20000)
+                        logger.info("Form filled successfully")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Form fill attempt {attempt + 1} failed: {e}")
+                        await page.wait_for_timeout(2000)
                 
-                # Click calculate with extended timeout
+                # Click calculate with retry
                 logger.info("Clicking calculate button...")
-                await page.click('button:has-text("Calculate IBAN")', timeout=20000)
-                await page.wait_for_timeout(8000)
-                logger.info("Calculate clicked, waiting for result...")
+                for attempt in range(3):
+                    try:
+                        await page.click('button:has-text("Calculate IBAN")', timeout=30000)
+                        logger.info("Calculate button clicked")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Calculate click attempt {attempt + 1} failed: {e}")
+                        await page.wait_for_timeout(2000)
+                
+                await page.wait_for_timeout(10000)
+                logger.info("Waiting for result...")
                 
                 # Get page content
                 content = await page.content()

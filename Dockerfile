@@ -28,9 +28,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
-RUN playwright install chromium && \
-    playwright install-deps chromium
+# Install Playwright browsers with proper permissions
+RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium && \
+    playwright install-deps chromium && \
+    chmod -R 755 /ms-playwright || true
 
 # Copy application code
 COPY --chown=app:app . .
@@ -43,6 +44,7 @@ ENV PYTHONPATH=/home/app
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_HEADLESS=true
 ENV PLAYWRIGHT_TIMEOUT=30000
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Expose port
 EXPOSE 8000

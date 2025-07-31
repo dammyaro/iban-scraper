@@ -33,7 +33,7 @@ services:
   - key: PLAYWRIGHT_HEADLESS
     value: "true"
   - key: PLAYWRIGHT_TIMEOUT
-    value: "30000"
+    value: "45000"
   - key: HOST
     value: "0.0.0.0"
   - key: PORT

@@ -64,9 +64,10 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
             page = await browser.new_page()
             
             try:
-                # Navigate to Wise
-                await page.goto("https://wise.com/ca/iban/calculator", timeout=30000)
-                await page.wait_for_timeout(2000)  # Simple wait instead of networkidle
+                # Navigate to Wise with extended timeout for cloud environment
+                timeout_ms = int(os.getenv("PLAYWRIGHT_TIMEOUT", "45000"))  # Increased default
+                await page.goto("https://wise.com/ca/iban/calculator", timeout=timeout_ms)
+                await page.wait_for_timeout(3000)  # Longer wait for cloud environment
                 logger.info("Page loaded")
                 
                 # Select country

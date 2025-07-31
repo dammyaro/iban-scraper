@@ -49,9 +49,10 @@ async def calculate_iban_playwright(country_code: str, bank_code: str, account_n
         logger.info("Attempting IBAN calculation using Playwright")
         
         async with async_playwright() as p:
-            # Launch browser with optimized settings
+            # Launch browser with optimized settings for Digital Ocean
+            headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true"
             browser = await p.chromium.launch(
-                headless=True,
+                headless=headless,
                 args=[
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
@@ -63,7 +64,10 @@ async def calculate_iban_playwright(country_code: str, bank_code: str, account_n
                     '--disable-translate',
                     '--disable-default-apps',
                     '--single-process',
-                    '--no-zygote'
+                    '--no-zygote',
+                    '--disable-setuid-sandbox',
+                    '--disable-extensions',
+                    '--disable-plugins'
                 ]
             )
             
@@ -73,7 +77,8 @@ async def calculate_iban_playwright(country_code: str, bank_code: str, account_n
             
             # Navigate to IBAN calculator
             url = "https://www.iban.com/calculate-iban"
-            await page.goto(url, timeout=30000)
+            timeout = int(os.getenv("PLAYWRIGHT_TIMEOUT", "30000"))
+            await page.goto(url, timeout=timeout)
             
             # Fill the form with correct selectors
             await page.select_option('select[name="country"]', country_code.upper())
@@ -86,7 +91,8 @@ async def calculate_iban_playwright(country_code: str, bank_code: str, account_n
             await page.click('input[type="submit"]')
             
             # Wait for result - look for the result page or any indication of completion
-            await page.wait_for_load_state('networkidle', timeout=15000)
+            result_timeout = int(os.getenv("PLAYWRIGHT_TIMEOUT", "30000")) // 2
+            await page.wait_for_load_state('networkidle', timeout=result_timeout)
             
             # Extract IBAN with multiple methods
             page_content = await page.content()

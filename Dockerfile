@@ -43,7 +43,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Playwright browsers as root before switching to app user
 RUN playwright install chromium && \
-    playwright install-deps chromium
+    playwright install-deps chromium && \
+    chmod -R 755 /ms-playwright
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app

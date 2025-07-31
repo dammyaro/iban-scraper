@@ -69,34 +69,34 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                 await page.wait_for_timeout(2000)  # Simple wait instead of networkidle
                 logger.info("Page loaded")
                 
-                # Select country with extended timeouts
+                # Select country with cloud-optimized timeouts
                 logger.info("Clicking country dropdown...")
-                await page.click('button:has-text("Select a Country")', timeout=10000)
-                await page.wait_for_timeout(2000)
+                await page.click('button:has-text("Select a Country")', timeout=20000)
+                await page.wait_for_timeout(3000)
                 
                 logger.info(f"Selecting country: {country_code}")
                 if country_code.upper() == 'GB':
-                    await page.click('text=United Kingdom', timeout=10000)
+                    await page.click('text=United Kingdom', timeout=20000)
                 elif country_code.upper() == 'DE':
-                    await page.click('text=Germany', timeout=10000)
+                    await page.click('text=Germany', timeout=20000)
                 elif country_code.upper() == 'FR':
-                    await page.click('text=France', timeout=10000)
+                    await page.click('text=France', timeout=20000)
                 else:
-                    await page.click(f'text={country_code.upper()}', timeout=10000)
+                    await page.click(f'text={country_code.upper()}', timeout=20000)
                 
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(5000)
                 logger.info(f"Selected country: {country_code}")
                 
-                # Fill form with timeouts
+                # Fill form with extended timeouts
                 logger.info("Filling form fields...")
-                await page.fill('input[name="branch_code"]', bank_code, timeout=10000)
-                await page.fill('input[name="account_number"]', account_number, timeout=10000)
+                await page.fill('input[name="branch_code"]', bank_code, timeout=15000)
+                await page.fill('input[name="account_number"]', account_number, timeout=15000)
                 logger.info("Form filled")
                 
-                # Click calculate with timeout
+                # Click calculate with extended timeout
                 logger.info("Clicking calculate button...")
-                await page.click('button:has-text("Calculate IBAN")', timeout=10000)
-                await page.wait_for_timeout(5000)
+                await page.click('button:has-text("Calculate IBAN")', timeout=20000)
+                await page.wait_for_timeout(8000)
                 logger.info("Calculate clicked, waiting for result...")
                 
                 # Get page content

@@ -1,7 +1,7 @@
-name: iban-calculator-scraper
+name: iban-wise-calculator
 region: nyc1
 services:
-- name: api
+- name: iban-api
   source_dir: /
   github:
     repo: dammyaro/iban-scraper
@@ -9,19 +9,19 @@ services:
     deploy_on_push: true
   dockerfile_path: Dockerfile
   build_command: |
-    echo "Building optimized IBAN scraper for Digital Ocean..."
-    echo "Using Python 3.11 for better compatibility..."
+    echo "Building IBAN Calculator with Wise integration..."
+    echo "Version 3.1.0 - Playwright + Bank Name Extraction"
   run_command: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
   environment_slug: docker
   instance_count: 1
-  instance_size_slug: basic-s  # 1 vCPU, 512MB RAM - needed for Playwright
+  instance_size_slug: basic-s  # 1 vCPU, 512MB RAM - sufficient for Playwright
   http_port: 8000
   
   health_check:
     http_path: /health
-    initial_delay_seconds: 90  # Increased for Playwright browser installation
+    initial_delay_seconds: 120  # Extra time for Playwright browser installation
     period_seconds: 30
-    timeout_seconds: 15
+    timeout_seconds: 20
     failure_threshold: 3
     success_threshold: 1
   
@@ -34,26 +34,19 @@ services:
     value: "true"
   - key: PLAYWRIGHT_TIMEOUT
     value: "30000"
-  - key: DISABLE_PLAYWRIGHT
-    value: "false"
-  - key: PLAYWRIGHT_BROWSERS_PATH
-    value: "/ms-playwright"
+  - key: HOST
+    value: "0.0.0.0"
+  - key: PORT
+    value: "8000"
   
-  # Optimized auto-scaling for cost efficiency
+  # Cost-optimized auto-scaling
   autoscaling:
     min_instance_count: 1
     max_instance_count: 2
     metrics:
     - type: cpu
       target:
-        average_utilization: 80
+        average_utilization: 75
     - type: memory
       target:
-        average_utilization: 85
-
-# Optional: Redis for caching IBAN results (commented out for cost optimization)
-# databases:
-# - name: redis-cache
-#   engine: REDIS
-#   version: "7"
-#   size: db-s-1vcpu-1gb
+        average_utilization: 80

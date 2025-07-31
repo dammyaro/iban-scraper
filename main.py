@@ -75,67 +75,120 @@ async def calculate_iban_playwright(country_code: str, bank_code: str, account_n
                 user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             
-            # Navigate to IBAN calculator
-            url = "https://www.iban.com/calculate-iban"
+            # Navigate to Wise IBAN calculator
+            url = "https://wise.com/ca/iban/calculator"
             timeout = int(os.getenv("PLAYWRIGHT_TIMEOUT", "30000"))
             await page.goto(url, timeout=timeout)
             
-            # Fill the form with correct selectors
-            await page.select_option('select[name="country"]', country_code.upper())
-            await page.wait_for_timeout(1000)  # Wait for form update
+            # Wait for page to load completely
+            await page.wait_for_load_state('networkidle')
             
-            await page.fill('input[name="bankcode"]', bank_code)
-            await page.fill('input[name="account"]', account_number)
+            # Step 1: Click on country dropdown to open it
+            await page.click('button:has-text("Select a Country")')
+            await page.wait_for_timeout(1000)
             
-            # Submit form
-            await page.click('input[type="submit"]')
+            # Step 2: Select the country (United Kingdom for GB)
+            if country_code.upper() == 'GB':
+                await page.click('text=United Kingdom')
+            elif country_code.upper() == 'DE':
+                await page.click('text=Germany')
+            elif country_code.upper() == 'FR':
+                await page.click('text=France')
+            else:
+                # Try to find the country by code or name
+                await page.click(f'text={country_code.upper()}')
+            
+            await page.wait_for_timeout(2000)  # Wait for form to transform
+            
+            # Step 3: Fill bank code (sort code for UK)
+            # The form should now show bank details inputs with specific names
+            await page.fill('input[name="branch_code"]', bank_code)
+            logger.info(f"Filled sort code: {bank_code}")
+            
+            # Step 4: Fill account number
+            await page.fill('input[name="account_number"]', account_number)
+            logger.info(f"Filled account number: {account_number}")
+            
+            # Step 5: Click calculate IBAN button
+            await page.click('button:has-text("Calculate IBAN")')
             
             # Wait for result - look for the result page or any indication of completion
             result_timeout = int(os.getenv("PLAYWRIGHT_TIMEOUT", "30000")) // 2
             await page.wait_for_load_state('networkidle', timeout=result_timeout)
             
-            # Extract IBAN with multiple methods
+            # Extract IBAN from Wise interface
             page_content = await page.content()
             soup = BeautifulSoup(page_content, 'html.parser')
             
             iban = None
             
-            # Method 1: Look for IBAN in input fields
-            iban_inputs = soup.find_all('input', {'name': 'iban'})
-            for iban_input in iban_inputs:
-                value = iban_input.get('value', '').strip()
-                # Check if this looks like a valid IBAN (not the formatted version)
-                if value and len(value) >= 15 and re.match(r'^[A-Z]{2}[0-9]{2}[A-Z0-9]+$', value):
-                    iban = value
-                    logger.info(f"Found IBAN in input field: {iban}")
-                    break
-            
-            # Method 2: Look for IBAN pattern in page text
-            if not iban:
-                # Look for German IBAN pattern specifically
-                iban_pattern = re.search(r'\b(DE[0-9]{2}[A-Z0-9]{16,18})\b', page_content)
-                if iban_pattern:
-                    iban = iban_pattern.group(1)
-                    logger.info(f"Found IBAN in page content: {iban}")
-            
-            # Method 3: Look for any IBAN pattern
-            if not iban:
-                iban_pattern = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4,32})\b', page_content)
-                if iban_pattern:
-                    iban = iban_pattern.group(1)
-                    logger.info(f"Found IBAN pattern: {iban}")
-            
-            # Method 4: Look in specific result containers
-            if not iban:
-                result_containers = soup.find_all(['div', 'span', 'p', 'td'], 
-                                                class_=re.compile(r'result|iban|output|answer', re.I))
-                for container in result_containers:
-                    text = container.get_text()
-                    iban_match = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4,32})\b', text)
-                    if iban_match:
-                        iban = iban_match.group(1)
-                        logger.info(f"Found IBAN in result container: {iban}")
+            # Method 1: Look for IBAN in result display area
+            result_elements = await page.query_selector_all('.result, .iban-result, [class*="result"], [class*="iban"]')
+            for element in result_elements:
+                text = await element.text_content()
+                if text:
+                    text = text.strip()
+                    if len(text) >= 15 and re.match(r'^[A-Z]{2}[0-9]{2}[A-Z0-9]+$', text):
+                        iban = text
+                        logger.info(f"Found IBAN in result element: {iban}")
                         break
+            
+            # Method 2: Look for IBAN in any visible text on page
+            if not iban:
+                all_elements = await page.query_selector_all('*')
+                for element in all_elements:
+                    try:
+                        text = await element.text_content()
+                        if text and len(text.strip()) >= 15:
+                            text = text.strip()
+                            # Look for IBAN pattern in the text
+                            iban_match = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{15,32})\b', text)
+                            if iban_match:
+                                potential_iban = iban_match.group(1)
+                                # Validate it starts with the correct country code
+                                if potential_iban.startswith(country_code.upper()):
+                                    iban = potential_iban
+                                    logger.info(f"Found IBAN in page element: {iban}")
+                                    break
+                    except:
+                        continue
+            
+            # Method 3: Look for country-specific IBAN patterns
+            if not iban:
+                if country_code.upper() == 'GB':
+                    # UK IBAN pattern: GB + 2 digits + 4 letters + 6 digits + 8 digits
+                    iban_pattern = re.search(r'\b(GB[0-9]{2}[A-Z]{4}[0-9]{6}[0-9]{8})\b', page_content)
+                elif country_code.upper() == 'DE':
+                    # German IBAN pattern
+                    iban_pattern = re.search(r'\b(DE[0-9]{2}[A-Z0-9]{16,18})\b', page_content)
+                else:
+                    # General IBAN pattern
+                    iban_pattern = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4,32})\b', page_content)
+                
+                if iban_pattern:
+                    iban = iban_pattern.group(1)
+                    logger.info(f"Found IBAN by pattern matching: {iban}")
+            
+            # Method 4: Look in any text content for IBAN
+            if not iban:
+                # Remove spaces and look for IBAN pattern
+                clean_content = re.sub(r'\s+', '', page_content)
+                iban_pattern = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4,32})\b', clean_content)
+                if iban_pattern:
+                    iban = iban_pattern.group(1)
+                    logger.info(f"Found IBAN in cleaned content: {iban}")
+            
+            # Method 5: Look in all text elements
+            if not iban:
+                all_text_elements = soup.find_all(text=True)
+                for text_element in all_text_elements:
+                    text = str(text_element).strip()
+                    if len(text) >= 15:
+                        iban_match = re.search(r'\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4,32})\b', text)
+                        if iban_match:
+                            iban = iban_match.group(1)
+                            logger.info(f"Found IBAN in text element: {iban}")
+                            break
             
             await browser.close()
             

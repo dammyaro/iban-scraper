@@ -21,9 +21,18 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="IBAN Calculator Scraper",
     description="A web scraper API that calculates IBAN numbers using Wise",
-    version="3.0.0",
+    version="3.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Pydantic models

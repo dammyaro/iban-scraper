@@ -28,10 +28,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers with proper permissions
-RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium && \
-    playwright install-deps chromium && \
-    chmod -R 755 /ms-playwright || true
+# No browser installation needed for simple requests version
 
 # Copy application code
 COPY --chown=app:app . .
@@ -53,5 +50,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application
-CMD ["python", "main_fixed.py"]
+# Run the application  
+CMD ["python", "main_simple.py"]

@@ -57,7 +57,12 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
                     '--disable-gpu',
                     '--disable-web-security',
                     '--single-process',
-                    '--no-zygote'
+                    '--no-zygote',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=TranslateUI',
+                    '--disable-ipc-flooding-protection'
                 ]
             )
             
@@ -65,10 +70,11 @@ async def calculate_iban_wise(country_code: str, bank_code: str, account_number:
             
             try:
                 # Navigate to Wise with extended timeout for cloud environment
-                timeout_ms = int(os.getenv("PLAYWRIGHT_TIMEOUT", "45000"))  # Increased default
+                timeout_ms = int(os.getenv("PLAYWRIGHT_TIMEOUT", "60000"))  # Even longer timeout
+                logger.info(f"Navigating to Wise with {timeout_ms}ms timeout")
                 await page.goto("https://wise.com/ca/iban/calculator", timeout=timeout_ms)
-                await page.wait_for_timeout(3000)  # Longer wait for cloud environment
-                logger.info("Page loaded")
+                await page.wait_for_timeout(5000)  # Longer wait for cloud environment
+                logger.info("Page loaded successfully")
                 
                 # Select country
                 await page.click('button:has-text("Select a Country")')
